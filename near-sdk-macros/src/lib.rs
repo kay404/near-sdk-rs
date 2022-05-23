@@ -3,6 +3,7 @@ extern crate proc_macro;
 
 mod core_impl;
 
+use core_impl::ext::generate_ext_structs;
 use proc_macro::TokenStream;
 
 use self::core_impl::*;
@@ -45,16 +46,16 @@ use syn::{File, ItemEnum, ItemImpl, ItemStruct, ItemTrait};
 #[proc_macro_attribute]
 pub fn near_bindgen(_attr: TokenStream, item: TokenStream) -> TokenStream {
     if let Ok(input) = syn::parse::<ItemStruct>(item.clone()) {
-        let struct_proxy = generate_sim_proxy_struct(&input.ident);
+        let ext_gen = generate_ext_structs(&input.ident, Some(&input.generics));
         TokenStream::from(quote! {
             #input
-            #struct_proxy
+            #ext_gen
         })
     } else if let Ok(input) = syn::parse::<ItemEnum>(item.clone()) {
-        let enum_proxy = generate_sim_proxy_struct(&input.ident);
+        let ext_gen = generate_ext_structs(&input.ident, Some(&input.generics));
         TokenStream::from(quote! {
             #input
-            #enum_proxy
+            #ext_gen
         })
     } else if let Ok(mut input) = syn::parse::<ItemImpl>(item) {
         let item_impl_info = match ItemImplInfo::new(&mut input) {
@@ -64,10 +65,11 @@ pub fn near_bindgen(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         };
         let generated_code = item_impl_info.wrapper_code();
-        // Add helper type for simulation testing only if not wasm32
-        let marshalled_code = item_impl_info.marshall_code();
+
+        // Add wrapper methods for ext call API
+        let ext_generated_code = item_impl_info.generate_ext_wrapper_code();
         TokenStream::from(quote! {
-            #marshalled_code
+            #ext_generated_code
             #input
             #generated_code
         })
@@ -120,7 +122,12 @@ pub fn ext_contract(attr: TokenStream, item: TokenStream) -> TokenStream {
             Ok(x) => x,
             Err(err) => return TokenStream::from(err.to_compile_error()),
         };
-        item_trait_info.wrapped_module().into()
+        let ext_api = item_trait_info.wrap_trait_ext();
+
+        TokenStream::from(quote! {
+            #input
+            #ext_api
+        })
     } else {
         TokenStream::from(
             syn::Error::new(Span::call_site(), "ext_contract can only be used on traits")
